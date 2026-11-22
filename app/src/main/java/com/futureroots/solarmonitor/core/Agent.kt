@@ -187,3 +187,194 @@ class Agent(
     // ---------- مساعدات ----------
     private val zone: ZoneId = cfg.timeZone?.let { try { ZoneId.of(it) } catch (_: Exception) { null } } ?: ZoneId.systemDefault()
     private fun localDate(): String = java.time.LocalDate.now(zone).toString()
+    private fun bucketStamp(): String {
+        val step = cfg.intervalMinutes * 60_000L
+        return iso(System.currentTimeMillis() / step * step)
+    }
+
+    // ---------- صندوق الإرسال (outbox): لا تضيع قراءة إن تعطلت جهة ----------
+    private fun deliver(item: OutboxItem) {
+        if (item.kind == "platform") {
+            val r = Http.postJson("${cfg.ecoUrl}/api/integrations/inverter", mapOf("Authorization" to "Bearer ${cfg.ecoKey}"), item.body)
+            val cum = r["cumulativeCheck"].asMap()?.get("status")
+            log("  [منصة] ${item.label}: hashMatchStatus=${r["hashMatchStatus"]} duplicate=${r["duplicate"] == true} cumulative=$cum")
+            if (r["hashMatchStatus"] != "match") log("  !! المنصة سجّلت عدم تطابق للهاش (${item.label})")
+        } else {
+            val r = Http.postJson("${item.url}/ingest", mapOf("Authorization" to "Bearer ${item.key}"), item.body)
+            log("  [تدقيق ${item.url}] ${item.label}: id=${r["id"]} hashStatus=${r["hashStatus"]} duplicate=${r["duplicate"] == true}${if (r["conflict"] != null && r["conflict"] != false) " CONFLICT!" else ""}")
+        }
+    }
+
+    private fun flushOutbox() {
+        val keep = ArrayList<OutboxItem>()
+        for (item in state.outbox.toList()) {
+            checkCancel()
+            try { deliver(item) }
+            catch (e: CancelledException) { throw e }
+            catch (e: Exception) {
+                item.attempts++
+                val age = System.currentTimeMillis() - (try { Instant.parse(item.createdAt).toEpochMilli() } catch (_: Exception) { 0L })
+                if (age > cfg.maxOutboxDays * 86_400_000L) log("  تخلّينا عن ${item.kind} ${item.label} بعد ${cfg.maxOutboxDays} أيام: ${e.message}")
+                else { keep.add(item); log("  [${item.kind}] ${item.label} لم يُسلَّم (محاولة ${item.attempts}) — سيُعاد: ${e.message}") }
+            }
+        }
+        state.outbox.clear(); state.outbox.addAll(keep)
+        store.save(state)
+    }
+
+    // ---------- التنفيذ ----------
+    fun run(dry: Boolean = false, exceptional: Boolean = false, forceScan: Boolean = false): RunResult {
+        if (!dry && (cfg.n8nUrl.isBlank() || cfg.n8nKey.isBlank() || cfg.ecoKey.isBlank()))
+            return RunResult(RunStatus.CONFIG_ERROR, 0, 0, 0, 0, "الإعدادات ناقصة — أعد التفعيل")
+        state = store.load()
+        return try { runInner(dry, exceptional, forceScan) }
+        catch (e: CancelledException) { try { store.save(state) } catch (_: Exception) { }; RunResult(RunStatus.CANCELLED, 0, 0, 0, state.outbox.size, "أُلغي") }
+    }
+
+    private fun runInner(dry: Boolean, exceptional: Boolean, forceScan: Boolean): RunResult {
+        val timestamp = if (exceptional) iso(System.currentTimeMillis()) else bucketStamp()
+        log("[${iso(System.currentTimeMillis())}] run v$VERSION ${if (dry) "(DRY) " else ""}${if (exceptional) "(EXCEPTIONAL) " else ""}ts=$timestamp")
+        log("ملفات التعريف: ${profiles.joinToString(", ") { it.id + if (it.status == "verified") "" else "*" }}")
+        if (!dry && state.outbox.isNotEmpty()) { log("إعادة إرسال ${state.outbox.size} عنصر معلّق..."); flushOutbox() }
+
+        // 1) تحديد الأجهزة (IP ليس معرّفاً دائماً: السيريال هو المعرّف)
+        var failures = 0; var sent = 0
+        val seen = (state.devices.keys + state.hosts.keys).distinct()
+        val known = if (allowed.isEmpty()) seen else allowed.map { a -> seen.firstOrNull { canon(it) == a } ?: a }
+        val hosts = LinkedHashMap<String, String>()
+        var scanned = locateDevices(hosts, known, forceFull = forceScan)
+        applyFilter(hosts)
+        fun missing() = known.filter { !has(hosts, it) }
+        if (missing().isNotEmpty() && scanned) {   // جهاز معروف لم يظهر: مسح ثانٍ بمهلة أطول قبل الاستسلام
+            log("لم يظهر: ${missing().joinToString(", ")} — إعادة المسح بمهلة أطول بعد 10 ثوانٍ")
+            sleep(10_000)
+            scanned = locateDevices(hosts, known, cfg.scanTimeoutMs * 2, forceFull = true)
+            applyFilter(hosts)
+        }
+        for (sn in missing()) { failures++; log("!! الإنفرتر $sn غير موجود على الشبكة (آخر عنوان معروف: ${state.hosts[sn] ?: "غير معروف"})") }
+        if (hosts.isNotEmpty()) {
+            val arp = env.readArp()
+            for ((sn, ip) in hosts) arp[ip]?.let { state.macs[sn] = it }
+        }
+        state.hosts.putAll(hosts); state.lastScan = System.currentTimeMillis()
+        if (hosts.isEmpty()) {
+            log("لم يُعثر على أي إنفرتر على الشبكة"); store.save(state)
+            return RunResult(RunStatus.NO_DEVICES, 0, 0, failures, state.outbox.size, "لم يُعثر على إنفرتر مطابق على هذه الشبكة", missing = missing(), ignored = ignored.toList())
+        }
+
+        // 2) قراءة ← n8n ← (منصة + مدققون)
+        for ((serial, host) in hosts.entries.toList()) {
+            checkCancel()
+            val tag = "$host ($serial)"
+            try {
+                val dev = devInfo.getValue(serial)
+                val prev = state.devices[serial]
+                val r: Reading = when (dev) {
+                    is Dev.Ss -> {
+                        val d = dev.d
+                        val x = gate.run(host) { SunSpec.readInverter(host, d, env.socketFactory, cfg.port) }
+                        Reading(null, x.totalKwh, null, x.ratedW, "SunSpec ${d.manufacturer} ${d.model}", x.wattsNow, linkedMapOf(
+                            "unit" to d.unit, "source" to "modbus-tcp-sunspec",
+                            "sunspec" to linkedMapOf("base" to d.base, "inverterModelId" to d.invId, "manufacturer" to d.manufacturer, "model" to d.model, "version" to d.version,
+                                "notImplemented" to x.notImplemented, "whWords" to x.whWords, "whScaleFactor" to x.whScaleFactor),
+                            "acPowerW" to x.wattsNow, "status" to x.status, "statusName" to x.statusName))
+                    }
+                    is Dev.Pr -> {
+                        val p = dev.m.profile
+                        val x = gate.run(host) { Profiles.readDevice(host, dev.m, env.socketFactory, cfg.port) }
+                        val ev = linkedMapOf<String, Any?>(
+                            "unit" to dev.m.unit, "source" to "modbus-tcp-fc0${p.function}",
+                            "profile" to linkedMapOf("id" to p.id, "status" to p.status, "addressOffset" to dev.m.offset),
+                            "registers" to linkedMapOf("dailyAddr" to p.daily?.address, "totalAddr" to p.total.address))
+                        if (x.dailyInvalid) ev["dailyInvalid"] = true
+                        ev["rawDailyRegister"] = x.rawDaily?.let { if (it.size == 1) it[0] else it.toList() }
+                        ev["rawTotalWords"] = x.rawTotal.toList()
+                        Reading(x.daily, x.totalKwh, p.total.scale, p.ratedW, "${p.brand} ${p.id}", null, ev)
+                    }
+                }
+                val total = jsRound(r.totalKwh)
+                val daily = r.daily
+                val hasDaily = daily != null
+                val nowDate = localDate()
+                val dateChanged = prev != null && prev.date.isNotEmpty() && prev.date != nowDate
+
+                // يوم جديد والعداد اليومي صفر تماماً: ننتظر أول قيمة موجبة حقيقية (لا نسجّل صفراً كاذباً)
+                if (daily != null && dateChanged && daily == 0.0) {
+                    log("$tag: يوم جديد (${prev?.date} ← $nowDate) والعداد اليومي 0 — انتظار أول قيمة موجبة، لا إرسال"); continue
+                }
+
+                // الإنتاج = فرق العداد الإجمالي منذ آخر قراءة ناجحة (تراكمي لا يتصفّر)، مع حواجز معقولية
+                val productionNow: Double; val derivation: String; var crossCheck: Map<String, Any?>? = null
+                if (prev == null) { productionNow = 0.0; derivation = "first-reading" }
+                else {
+                    val diff = r.totalKwh - prev.total
+                    val hours = max((Instant.parse(timestamp).toEpochMilli() - Instant.parse(prev.timestamp).toEpochMilli()) / 3.6e6, 0.0)
+                    if (diff < -0.05) throw IllegalStateException("العداد الإجمالي نقص (${prev.total} ← ${"%.1f".format(r.totalKwh)} kWh): استبدال جهاز أو خطأ في معامل القياس — لم يُرسل شيء")
+                    val rw = r.ratedW
+                    if (rw != null && hours > 0 && diff > max(1.0, (rw / 1000) * hours * 1.5))
+                        throw IllegalStateException("الزيادة ${"%.1f".format(diff)} kWh أكبر من الممكن لإنفرتر ${rw}W خلال ${"%.1f".format(hours)} ساعة — لم يُرسل شيء")
+                    productionNow = toFixed(max(diff, 0.0), 1); derivation = "delta-of-total"
+                    if (daily != null) {             // العداد اليومي للتحقق فقط: لا يغيّر الرقم المُرسل
+                        val tol = max(1.5, (r.totalResolution?.takeIf { it != 0.0 } ?: 0.1) * 1.5)
+                        val pd = prev.daily
+                        val dailyDelta = if (!dateChanged && pd != null) toFixed(daily - pd, 1) else null
+                        val ok = if (dateChanged) diff + tol >= daily else if (dailyDelta == null) true else abs(dailyDelta - diff) <= tol
+                        crossCheck = linkedMapOf("status" to (if (ok) "ok" else "mismatch"), "dailyKwh" to daily, "dailyDelta" to dailyDelta, "totalDelta" to toFixed(diff, 3), "dateChanged" to dateChanged)
+                        if (!ok) log("  تنبيه: العداد اليومي لا يطابق فرق الإجمالي (يومي ${dailyDelta ?: daily} ↔ إجمالي ${"%.1f".format(diff)}) — اعتمدنا الإجمالي")
+                    }
+                }
+                log("$tag: [${r.label}] total=${"%.1f".format(r.totalKwh)}kWh${if (daily != null) " daily=${Json.numToString(daily)}" else ""}${if (r.power != null) " power=${Json.numToString(r.power)}W" else ""} productionNow=${Json.numToString(productionNow)} ($derivation${if (dateChanged) ", يوم جديد" else ""})")
+                val evidence = linkedMapOf<String, Any?>("readAt" to iso(System.currentTimeMillis()), "host" to host)
+                evidence.putAll(r.ev)
+                evidence["totalKwh"] = toFixed(r.totalKwh, 3); evidence["dailyKwh"] = daily
+                evidence["previousTotalKwh"] = prev?.total; evidence["previousTimestamp"] = prev?.timestamp
+                evidence["localDate"] = nowDate; evidence["previousLocalDate"] = prev?.date
+                evidence["crossCheck"] = crossCheck; evidence["derivation"] = derivation
+                // لا نحفظ عداداً يومياً مشبوهاً (هبوط لحظي داخل اليوم نفسه) حتى لا يُربك المقارنة التالية
+                val pd2 = prev?.daily
+                val suspicious = daily != null && crossCheck?.get("status") == "mismatch" && !dateChanged && pd2 != null && daily < pd2
+                val keepDaily: Double? = if (daily != null && !suspicious) daily else pd2
+                val stateEntry = DeviceState(toFixed(r.totalKwh, 3), timestamp, nowDate, dev.driverName, if (hasDaily) keepDaily else null)
+                val payload = linkedMapOf<String, Any?>("serialNumber" to serial, "productionNow" to productionNow, "productionTotal" to total, "timestamp" to timestamp)
+
+                if (prev?.timestamp == timestamp) { log("  أُرسلت قراءة هذه الفترة — تخطي"); continue }
+                if (dry) { log("  (dry) canonical=" + canonical(serial, productionNow, total, timestamp)); continue }
+                if (dev is Dev.Pr && dev.m.profile.status != "verified" && !cfg.allowUnverified)
+                    throw IllegalStateException("ملف التعريف ${dev.m.profile.id} غير مُتحقَّق — لا إرسال فعلي. طابق الأرقام مع تطبيق الشركة ثم غيّر status إلى verified")
+
+                // الخطوة 1: n8n يحسب الهاش ويسجله على Hedera
+                val n8n = Http.postWithRetry(cfg.n8nUrl, mapOf("x-agent-key" to cfg.n8nKey), payload, log = log)
+                val n8nHash = n8n["n8nHash"].asStr(); val txId = n8n["hederaTransactionId"]?.toString()
+                if (n8nHash.isNullOrEmpty() || txId.isNullOrEmpty()) throw IllegalStateException("رد n8n ناقص: " + Json.stringify(n8n).take(200))
+                val accountId = n8n["hederaAccountId"]?.toString()?.takeIf { it.isNotEmpty() } ?: if (txId.contains('@')) txId.substringBefore('@') else null
+                val topicId = n8n["hederaTopicId"]?.toString()?.takeIf { it.isNotEmpty() }
+                val consensusAt = n8n["hederaConsensusAt"]?.toString()?.takeIf { it.isNotEmpty() }
+                log("  n8n hash=$n8nHash\n  hedera tx=$txId account=$accountId topic=$topicId")
+                if (sha256(canonical(serial, productionNow, total, timestamp)) != n8nHash) { failures++; log("  !! هاش n8n يختلف عن حساب الـ Agent — صيغة الهاش في n8n غير مطابقة") }
+
+                // الخطوتان 2 و3: نُخزّن أولاً في الـ outbox (لا يضيع شيء) ثم نُسلّم
+                val label = "$serial@$timestamp"; val nowIso = iso(System.currentTimeMillis())
+                val platform = LinkedHashMap<String, Any?>(payload)
+                platform["n8nHash"] = n8nHash; platform["hederaTransactionId"] = txId
+                consensusAt?.let { platform["hederaConsensusAt"] = it }; accountId?.let { platform["hederaAccountId"] = it }; topicId?.let { platform["hederaTopicId"] = it }
+                state.outbox.add(OutboxItem("platform", label, nowIso, null, null, platform))
+                for (a in cfg.audits) {
+                    val body = LinkedHashMap<String, Any?>(payload)
+                    body["n8nHash"] = n8nHash
+                    body["hedera"] = linkedMapOf("transactionId" to txId, "accountId" to accountId, "topicId" to topicId, "consensusAt" to consensusAt)
+                    body["evidence"] = evidence; body["agentVersion"] = VERSION
+                    state.outbox.add(OutboxItem("audit", label, nowIso, a.url, a.key, body))
+                }
+                state.devices[serial] = stateEntry
+                sent++
+                store.save(state)                  // الحالة + الـ outbox معاً قبل أي اتصال بالمنصة/المدقق
+                flushOutbox()
+            } catch (e: CancelledException) { throw e }
+            catch (e: Exception) { failures++; log("$tag: FAILED — ${e.message}") }
+        }
+        store.save(state)
+        if (state.outbox.isNotEmpty()) log("معلّق للإرسال لاحقاً: ${state.outbox.size}")
+        val status = if (failures == 0) RunStatus.OK else RunStatus.PARTIAL
+        return RunResult(status, hosts.size, sent, failures, state.outbox.size, if (failures == 0) "تمت القراءة بنجاح" else "اكتملت مع $failures خطأ", hosts, missing(), ignored.toList())
+    }
+}
