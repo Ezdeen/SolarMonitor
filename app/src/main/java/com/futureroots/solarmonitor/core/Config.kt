@@ -11,10 +11,7 @@ data class Config(
     val ecoKey: String,
     val audits: List<Audit> = emptyList(),
     val customer: String? = null,
-<<<<<<< HEAD
     val serials: List<String> = emptyList(),        // أرقام الإنفرترات التي أدخلها المستخدم؛ لا يُقرأ/يُرسل غيرها (فارغ = الكل)
-=======
->>>>>>> 540a325b2a54ee83d0f851610ccb86cb6802011f
     val ssids: List<String> = emptyList(),          // شبكات Wi-Fi المسموحة (اختياري؛ تُتعلَّم تلقائياً أيضاً)
     val subnet: String? = null,                     // بديل المسح التلقائي للنطاق
     val hosts: List<String> = emptyList(),          // عناوين محددة بدل المسح
