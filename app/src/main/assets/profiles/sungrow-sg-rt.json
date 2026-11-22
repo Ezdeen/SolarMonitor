@@ -1,0 +1,15 @@
+{
+  "id": "sungrow-sg-rt",
+  "brand": "Sungrow",
+  "model": "SG RT series (عبر WiNet-S / WiNet-S2 أو LAN)",
+  "status": "verified",
+  "verifiedModels": ["SG15RT"],
+  "verifiedNote": "مُستخدَم في الإنتاج الفعلي ومطابَق مع المنصة. الموديلات الأخرى من السلسلة نفسها تحتاج مطابقة قبل الاعتماد.",
+  "priority": 10,
+  "function": 4,
+  "unit": 1,
+  "addressOffset": -1,
+  "serial": { "address": 4990, "words": 6, "pattern": "^[A-Z0-9]{6,20}$" },
+  "daily":  { "address": 5003, "words": 1, "scale": 0.1 },
+  "total":  { "address": 5004, "words": 2, "wordOrder": "low-high", "scale": 1 }
+}
