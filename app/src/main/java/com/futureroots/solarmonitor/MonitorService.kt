@@ -69,11 +69,7 @@ class MonitorService : Service() {
             return START_NOT_STICKY
         }
         val cfg = Prefs.config(this)
-<<<<<<< HEAD
         if (cfg == null || cfg.serials.isEmpty()) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }
-=======
-        if (cfg == null) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY }
->>>>>>> 540a325b2a54ee83d0f851610ccb86cb6802011f
         Prefs.setEnabled(this, true)
 
         val stepMs = cfg.intervalMinutes * 60_000L
@@ -111,7 +107,6 @@ class MonitorService : Service() {
             val res = newAgent(cfg, wifi).also { agent = it }.run(dry = dry)
             if (res.found > 0) Prefs.learn(this, wifi.ssid, Net.subnet24(wifi.ip))
             val hhmm = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-<<<<<<< HEAD
             val pending = if (res.pendingOutbox > 0) "، معلّق ${res.pendingOutbox}" else ""
             val miss = if (res.missing.isNotEmpty()) "\nلم يُعثر على: ${res.missing.joinToString("، ")}" else ""
             val text = when (res.status) {
@@ -120,14 +115,6 @@ class MonitorService : Service() {
                 RunStatus.CONFIG_ERROR -> res.message
                 RunStatus.CANCELLED -> "أُلغي"
                 else -> (if (dry) "اختبار $hhmm: وُجد ${res.found} من ${cfg.serials.size} (بلا إرسال)" else "$hhmm: وُجد ${res.found} من ${cfg.serials.size}، أُرسل ${res.sent}$pending") + miss
-=======
-            val text = when (res.status) {
-                RunStatus.OK -> if (dry) "اختبار $hhmm: وُجد ${res.found} إنفرتر (بلا إرسال)" else "آخر تشغيل $hhmm: ${res.found} إنفرتر، أُرسل ${res.sent}" + if (res.pendingOutbox > 0) "، معلّق ${res.pendingOutbox}" else ""
-                RunStatus.PARTIAL -> "آخر تشغيل $hhmm: ${res.message}" + if (res.pendingOutbox > 0) "، معلّق ${res.pendingOutbox}" else ""
-                RunStatus.NO_DEVICES -> "$hhmm: ${res.message}"
-                RunStatus.CONFIG_ERROR -> res.message
-                RunStatus.CANCELLED -> "أُلغي"
->>>>>>> 540a325b2a54ee83d0f851610ccb86cb6802011f
             }
             setStatus(text, res.status != RunStatus.CANCELLED)
         } finally {

@@ -13,11 +13,7 @@ object Prefs {
 
     fun config(c: Context): Config? {
         val t = token(c) ?: return null
-<<<<<<< HEAD
         return try { Activation.parse(t).copy(intervalMinutes = interval(c), serials = serials(c)) } catch (_: Exception) { null }
-=======
-        return try { Activation.parse(t).copy(intervalMinutes = interval(c)) } catch (_: Exception) { null }
->>>>>>> 540a325b2a54ee83d0f851610ccb86cb6802011f
     }
 
     fun activate(c: Context, token: String, suggestedInterval: Int) {
@@ -27,12 +23,9 @@ object Prefs {
 
     fun deactivate(c: Context) { sp(c).edit().clear().apply() }
 
-<<<<<<< HEAD
     fun serials(c: Context): List<String> = (sp(c).getString("serials", "") ?: "").split('\n').map { it.trim() }.filter { it.isNotEmpty() }
     fun setSerials(c: Context, list: List<String>) { sp(c).edit().putString("serials", list.joinToString("\n")).apply() }
 
-=======
->>>>>>> 540a325b2a54ee83d0f851610ccb86cb6802011f
     fun interval(c: Context): Int = sp(c).getInt("interval", 60).let { if (it == 15) 15 else 60 }
     fun setInterval(c: Context, minutes: Int) { sp(c).edit().putInt("interval", if (minutes == 15) 15 else 60).apply() }
 
