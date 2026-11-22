@@ -1,0 +1,15 @@
+{
+  "_help": "قالب لماركة جديدة. انسخه باسم brand-model.json (الملفات التي تبدأ بـ _ تُتجاهل). status يبقى unverified حتى تطابق الأرقام مع تطبيق الشركة.",
+  "id": "brand-model",
+  "brand": "اسم الشركة",
+  "model": "الموديل / السلسلة",
+  "status": "unverified",
+  "priority": 100,
+  "function": 3,
+  "unit": 1,
+  "addressOffset": 0,
+  "serial": { "address": 0, "words": 8, "pattern": "^[A-Z0-9]{6,20}$" },
+  "daily":  { "address": 0, "words": 1, "scale": 0.1, "_help": "اختياري: احذف daily إن لم يوجد عداد يومي (يُشتق الإنتاج من العداد الإجمالي)" },
+  "total":  { "address": 0, "words": 2, "wordOrder": "high-low", "scale": 0.1, "_help": "الناتج بوحدة kWh بعد الضرب في scale" },
+  "ratedW": 10000
+}
