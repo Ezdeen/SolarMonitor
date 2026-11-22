@@ -295,6 +295,7 @@ fun main() {
         check(Net.networkFor("192.168.1.9", 31) == null && Net.networkFor("169.254.1.1", 16) == null, "/31 و link-local مستبعدان")
     }
 
+<<<<<<< HEAD
     println("== 11) مطابقة أرقام الإنفرترات التي أدخلها المستخدم ==")
     run {
         val cloud = FakeCloud(); val sg = SungrowSim(); val srv = FakeModbus(15026, sg::regs)
@@ -311,6 +312,8 @@ fun main() {
         srv.close(); cloud.server.stop(0)
     }
 
+=======
+>>>>>>> 540a325b2a54ee83d0f851610ccb86cb6802011f
     println("\nالنتيجة: $pass نجح، $fail فشل")
     System.exit(if (fail == 0) 0 else 1)
 }

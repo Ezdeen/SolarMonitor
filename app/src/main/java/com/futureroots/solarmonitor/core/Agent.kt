@@ -22,12 +22,16 @@ class CancelledException : RuntimeException("أُلغي التشغيل")
 
 enum class RunStatus { OK, PARTIAL, NO_DEVICES, CONFIG_ERROR, CANCELLED }
 
+<<<<<<< HEAD
 class RunResult(
     val status: RunStatus, val found: Int, val sent: Int, val failures: Int, val pendingOutbox: Int, val message: String,
     val hosts: Map<String, String> = emptyMap(),
     val missing: List<String> = emptyList(),     // أرقام أدخلها المستخدم ولم تُوجد على الشبكة
     val ignored: List<String> = emptyList(),     // إنفرترات وُجدت لكنها غير مُدخلة (تُتجاهل)
 )
+=======
+class RunResult(val status: RunStatus, val found: Int, val sent: Int, val failures: Int, val pendingOutbox: Int, val message: String, val hosts: Map<String, String> = emptyMap())
+>>>>>>> 540a325b2a54ee83d0f851610ccb86cb6802011f
 
 /**
  * نسخة أندرويد من agent.mjs:
@@ -56,6 +60,7 @@ class Agent(
     private fun sleep(ms: Long) { try { Thread.sleep(ms) } catch (_: InterruptedException) { throw CancelledException() } }
 
     private val gate = Gate(cfg.cooldownMs)
+<<<<<<< HEAD
     private fun canon(s: String) = s.trim().uppercase()
     private val allowed: Set<String> = cfg.serials.map { canon(it) }.filter { it.isNotEmpty() }.toSet()
     private val ignored = LinkedHashSet<String>()
@@ -68,6 +73,8 @@ class Agent(
             found.remove(sn); devInfo.remove(sn); ignored.add(sn)
         }
     }
+=======
+>>>>>>> 540a325b2a54ee83d0f851610ccb86cb6802011f
     private lateinit var state: State
 
     private sealed class Dev(val driverName: String) {
@@ -138,18 +145,31 @@ class Agent(
     private fun resolveKnown(found: MutableMap<String, String>, known: List<String>) {
         for (sn in known) {
             val ip = state.hosts[sn]
+<<<<<<< HEAD
             if (ip == null || has(found, sn)) continue
             checkCancel()
             if (portOpen(ip, 2000)) probeHost(ip, found)
             if (has(found, sn)) log("  $sn: على عنوانه المعروف $ip")
         }
         val lost = known.filter { !has(found, it) && state.macs.containsKey(it) }
+=======
+            if (ip == null || found.containsKey(sn)) continue
+            checkCancel()
+            if (portOpen(ip, 2000)) probeHost(ip, found)
+            if (found.containsKey(sn)) log("  $sn: على عنوانه المعروف $ip")
+        }
+        val lost = known.filter { !found.containsKey(it) && state.macs.containsKey(it) }
+>>>>>>> 540a325b2a54ee83d0f851610ccb86cb6802011f
         if (lost.isEmpty()) return
         log("  تغيّر عنوان ${lost.joinToString(", ")}؟ البحث بالـ MAC في جدول ARP ...")
         Net.pokeArp(nets().flatMap { it.hosts }, 1000)
         val arp = env.readArp()
         for (sn in lost) {
+<<<<<<< HEAD
             if (has(found, sn)) continue
+=======
+            if (found.containsKey(sn)) continue
+>>>>>>> 540a325b2a54ee83d0f851610ccb86cb6802011f
             val ip = Net.macToIp(arp, state.macs[sn]) ?: continue
             if (ip == state.hosts[sn]) continue
             log("  $sn: MAC ${state.macs[sn]} ظهر الآن على $ip (كان ${state.hosts[sn]})")
@@ -171,7 +191,11 @@ class Agent(
         if (!forceFull) resolveKnown(found, known)
         val now = System.currentTimeMillis()
         val stale = now - state.lastFullScan > cfg.fullScanHours * 3600_000L
+<<<<<<< HEAD
         val lostNow = known.filter { !has(found, it) }
+=======
+        val lostNow = known.filter { !found.containsKey(it) }
+>>>>>>> 540a325b2a54ee83d0f851610ccb86cb6802011f
         // جهاز غائب: نمسح بالكامل لكن لا أكثر من مرة كل lostRescanMinutes (على الهاتف قد نكون خارج شبكة المشروع)
         val lostAllowed = lostNow.isNotEmpty() && now - state.lastLostScan > cfg.lostRescanMinutes * 60_000L
         if (forceFull || stale || known.isEmpty() || lostAllowed) {
@@ -239,17 +263,27 @@ class Agent(
 
         // 1) تحديد الأجهزة (IP ليس معرّفاً دائماً: السيريال هو المعرّف)
         var failures = 0; var sent = 0
+<<<<<<< HEAD
         val seen = (state.devices.keys + state.hosts.keys).distinct()
         val known = if (allowed.isEmpty()) seen else allowed.map { a -> seen.firstOrNull { canon(it) == a } ?: a }
         val hosts = LinkedHashMap<String, String>()
         var scanned = locateDevices(hosts, known, forceFull = forceScan)
         applyFilter(hosts)
         fun missing() = known.filter { !has(hosts, it) }
+=======
+        val known = (state.devices.keys + state.hosts.keys).distinct()
+        val hosts = LinkedHashMap<String, String>()
+        var scanned = locateDevices(hosts, known, forceFull = forceScan)
+        fun missing() = known.filter { !hosts.containsKey(it) }
+>>>>>>> 540a325b2a54ee83d0f851610ccb86cb6802011f
         if (missing().isNotEmpty() && scanned) {   // جهاز معروف لم يظهر: مسح ثانٍ بمهلة أطول قبل الاستسلام
             log("لم يظهر: ${missing().joinToString(", ")} — إعادة المسح بمهلة أطول بعد 10 ثوانٍ")
             sleep(10_000)
             scanned = locateDevices(hosts, known, cfg.scanTimeoutMs * 2, forceFull = true)
+<<<<<<< HEAD
             applyFilter(hosts)
+=======
+>>>>>>> 540a325b2a54ee83d0f851610ccb86cb6802011f
         }
         for (sn in missing()) { failures++; log("!! الإنفرتر $sn غير موجود على الشبكة (آخر عنوان معروف: ${state.hosts[sn] ?: "غير معروف"})") }
         if (hosts.isNotEmpty()) {
@@ -259,7 +293,11 @@ class Agent(
         state.hosts.putAll(hosts); state.lastScan = System.currentTimeMillis()
         if (hosts.isEmpty()) {
             log("لم يُعثر على أي إنفرتر على الشبكة"); store.save(state)
+<<<<<<< HEAD
             return RunResult(RunStatus.NO_DEVICES, 0, 0, failures, state.outbox.size, "لم يُعثر على إنفرتر مطابق على هذه الشبكة", missing = missing(), ignored = ignored.toList())
+=======
+            return RunResult(RunStatus.NO_DEVICES, 0, 0, failures, state.outbox.size, "لم يُعثر على إنفرتر على هذه الشبكة")
+>>>>>>> 540a325b2a54ee83d0f851610ccb86cb6802011f
         }
 
         // 2) قراءة ← n8n ← (منصة + مدققون)
@@ -375,6 +413,10 @@ class Agent(
         store.save(state)
         if (state.outbox.isNotEmpty()) log("معلّق للإرسال لاحقاً: ${state.outbox.size}")
         val status = if (failures == 0) RunStatus.OK else RunStatus.PARTIAL
+<<<<<<< HEAD
         return RunResult(status, hosts.size, sent, failures, state.outbox.size, if (failures == 0) "تمت القراءة بنجاح" else "اكتملت مع $failures خطأ", hosts, missing(), ignored.toList())
+=======
+        return RunResult(status, hosts.size, sent, failures, state.outbox.size, if (failures == 0) "تمت القراءة بنجاح" else "اكتملت مع $failures خطأ", hosts)
+>>>>>>> 540a325b2a54ee83d0f851610ccb86cb6802011f
     }
 }
