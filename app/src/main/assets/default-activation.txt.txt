@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "name": "تجربة",
+  "n8n": "https://n8n.futureroots.site/webhook/eco-inverter",
+  "key": "4cc8f9c6b75fe604eccb4218b028fbb9fc9334821e3238e5",
+  "eco": "https://eco.futureroots.site",
+  "ecoKey": "esg_8de61527be6c6165ac1e6b2d1c30bd5d18ccca1bd20b28278c49a6f894965c6e",
+  "tz": "Asia/Jerusalem",
+  "interval": 60
+}
