@@ -17,7 +17,7 @@ object Prefs {
     }
 
     fun activate(c: Context, token: String, suggestedInterval: Int) {
-        sp(c).edit().putString("token", token).putInt("interval", suggestedInterval).putBoolean("enabled", true)
+        sp(c).edit().putString("token", token).putInt("interval", if (suggestedInterval == 240) 240 else 180).putBoolean("enabled", true)
             .remove("learnedSsids").remove("learnedSubnets").remove("lastRunAt").remove("status").apply()
     }
 
@@ -26,11 +26,16 @@ object Prefs {
     fun serials(c: Context): List<String> = (sp(c).getString("serials", "") ?: "").split('\n').map { it.trim() }.filter { it.isNotEmpty() }
     fun setSerials(c: Context, list: List<String>) { sp(c).edit().putString("serials", list.joinToString("\n")).apply() }
 
-    fun interval(c: Context): Int = sp(c).getInt("interval", 60).let { if (it == 15) 15 else 60 }
-    fun setInterval(c: Context, minutes: Int) { sp(c).edit().putInt("interval", if (minutes == 15) 15 else 60).apply() }
+    /** فترة السحب بالدقائق: 180 (كل 3 ساعات، الافتراضي) أو 240 (كل 4 ساعات). أي قيمة قديمة (15/60) تتحول إلى 180. */
+    fun interval(c: Context): Int = sp(c).getInt("interval", 180).let { if (it == 240) 240 else 180 }
+    fun setInterval(c: Context, minutes: Int) { sp(c).edit().putInt("interval", if (minutes == 240) 240 else 180).apply() }
 
     fun enabled(c: Context) = sp(c).getBoolean("enabled", true)
     fun setEnabled(c: Context, v: Boolean) { sp(c).edit().putBoolean("enabled", v).apply() }
+
+    /** هل عُرض إعداد أول تشغيل (الصلاحيات + استثناء البطارية) تلقائياً؟ */
+    fun setupDone(c: Context) = sp(c).getBoolean("setupDone", false)
+    fun setSetupDone(c: Context) { sp(c).edit().putBoolean("setupDone", true).apply() }
 
     // الشبكات التي نجح الاكتشاف عليها (تُتعلَّم تلقائياً): أساس قرار "أنا داخل شبكة المشروع أم لا"
     fun learnedSsids(c: Context): Set<String> = sp(c).getStringSet("learnedSsids", emptySet()) ?: emptySet()

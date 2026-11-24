@@ -25,8 +25,9 @@
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
 
+        <!-- شاشة الترحيب (حسب التصميم) ثم الشاشة الرئيسية -->
         <activity
-            android:name=".MainActivity"
+            android:name=".SplashActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -34,10 +35,25 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".MainActivity"
+            android:exported="false" />
+
+        <!-- تشغيل يدوي فقط (أزرار «إعادة المحاولة/فحص»)؛ إشعاره بأدنى أهمية ومخفي من شاشة القفل -->
         <service
             android:name=".MonitorService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+
+        <!-- التشغيل الدوري الصامت في الخلفية (بلا إشعار): يعمل عند الاتصال بالشبكة وبعد الإقلاع -->
+        <service
+            android:name=".SyncJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <receiver
+            android:name=".AlarmReceiver"
+            android:exported="false" />
 
         <receiver
             android:name=".BootReceiver"

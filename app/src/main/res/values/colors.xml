@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="launcher_bg">#F9A825</color>
+    <color name="app_bg">#F8FAF8</color>
+    <color name="brand_primary">#159B69</color>
+    <color name="brand_deep">#104B38</color>
 </resources>
